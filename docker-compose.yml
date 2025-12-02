@@ -1,0 +1,39 @@
+name: css_auth
+
+services:
+  mongodb:
+    image: mongo:8.0.15
+    container_name: css_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: css_admin
+      MONGO_INITDB_ROOT_PASSWORD: qazwsxedc
+      MONGO_INITDB_DATABASE: css_auth
+    ports:
+      - "27017:27017"
+    volumes:
+      - css_vol:/data/db
+    networks:
+      - css_network
+
+  nextjs_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: css_auth_container
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    ports:
+      - "3000:3000"
+    networks:
+      - css_network
+    depends_on:
+      - mongodb
+
+volumes:
+  css_vol:
+
+networks:
+  css_network:
+    driver: bridge
