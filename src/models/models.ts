@@ -1,24 +1,33 @@
 import mongoose, { Schema, model, models } from "mongoose";
 
-// 1. User Model tailored for all Auth Types
 const UserSchema = new Schema({
   name: String,
   email: { type: String, unique: true },
   password: { type: String, select: false },
 
+  // RBAC
   role: {
     type: String,
     enum: ["Admin", "Manager", "Employee", "HR"],
     default: "Employee",
   },
 
+  // Security & attributes
   clearanceLevel: { type: Number, default: 1 },
-
   department: String,
   status: { type: String, default: "Active" },
 
-  shiftStart: { type: Number, default: 9 },
-  shiftEnd: { type: Number, default: 17 },
+  // Account Lockout Fields
+  loginAttempts: { type: Number, default: 0 },
+  lockUntil: { type: Date },
+
+  // MFA Fields
+  mfaSecret: { type: String, select: false },
+  isMfaEnabled: { type: Boolean, default: false },
+
+  // Verification
+  isVerified: { type: Boolean, default: false },
+  verificationToken: { type: String, select: false },
 });
 
 export const User = models.User || model("User", UserSchema);

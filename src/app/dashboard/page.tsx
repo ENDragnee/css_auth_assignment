@@ -3,6 +3,7 @@
 import { useSession, signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 import { checkAccess, getResources } from "../actions";
+import Link from "next/link";
 
 // Define strict types locally to match the server actions
 type AccessType = "MAC" | "DAC" | "RBAC" | "RuBAC" | "ABAC";
@@ -55,10 +56,10 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen p-8 bg-background text-foreground transition-colors duration-300">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Welcome, {user.name}</h1>
-          <div className="text-sm text-muted-foreground mt-2 flex gap-2">
+          <div className="text-sm text-muted-foreground mt-2 flex flex-wrap gap-2">
             <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-1 rounded font-medium">
               Role: {user.role}
             </span>
@@ -70,12 +71,22 @@ export default function Dashboard() {
             </span>
           </div>
         </div>
-        <button
-          onClick={() => signOut()}
-          className="bg-destructive text-destructive-foreground px-4 py-2 rounded font-medium hover:bg-destructive/90 transition-colors shadow-sm"
-        >
-          Logout
-        </button>
+
+        <div className="flex gap-3">
+          <Link
+            href="/profile"
+            className="bg-primary text-primary-foreground px-4 py-2 rounded font-medium hover:bg-primary/90 transition-colors shadow-sm flex items-center"
+          >
+            Manage Profile & MFA
+          </Link>
+          <button
+            // UPDATE: Added callbackUrl to redirect to home page "/" after signout
+            onClick={() => signOut({ callbackUrl: "/" })}
+            className="bg-destructive text-destructive-foreground px-4 py-2 rounded font-medium hover:bg-destructive/90 transition-colors shadow-sm"
+          >
+            Logout
+          </button>
+        </div>
       </div>
 
       {result && (

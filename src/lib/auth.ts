@@ -4,8 +4,9 @@ import { connectDB } from "@/lib/db";
 import { User as UserModel } from "@/models/models";
 import { logActivity } from "@/lib/logger";
 import { verifyPassword } from "@/lib/password-utils";
+import { authenticator } from "otplib";
 
-// Module augmentation (Keep as is)
+// Extend NextAuth types
 declare module "next-auth" {
   interface Session {
     user: {
@@ -13,6 +14,7 @@ declare module "next-auth" {
       role: string;
       clearanceLevel: number;
       department: string;
+      isMfaEnabled: boolean;
     } & DefaultSession["user"];
   }
 
@@ -20,6 +22,7 @@ declare module "next-auth" {
     role: string;
     clearanceLevel: number;
     department: string;
+    isMfaEnabled: boolean;
   }
 }
 
@@ -29,14 +32,15 @@ declare module "next-auth/jwt" {
     role: string;
     clearanceLevel: number;
     department: string;
+    isMfaEnabled: boolean;
   }
 }
 
 export const authOptions: NextAuthOptions = {
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt" }, // Token-based authentication
   secret: process.env.NEXTAUTH_SECRET,
   pages: {
-    signIn: "/", // Directs NextAuth to use our custom page
+    signIn: "/",
   },
   callbacks: {
     async jwt({ token, user }) {
@@ -45,6 +49,7 @@ export const authOptions: NextAuthOptions = {
         token.clearanceLevel = user.clearanceLevel;
         token.department = user.department;
         token.id = user.id;
+        token.isMfaEnabled = user.isMfaEnabled;
       }
       return token;
     },
@@ -54,6 +59,7 @@ export const authOptions: NextAuthOptions = {
         session.user.clearanceLevel = token.clearanceLevel;
         session.user.department = token.department;
         session.user.id = token.id;
+        session.user.isMfaEnabled = token.isMfaEnabled;
       }
       return session;
     },
@@ -64,42 +70,78 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        mfaCode: { label: "MFA Code", type: "text" }, // New Field
       },
       async authorize(credentials) {
         try {
-          // 1. Validate Input
-          if (!credentials?.email || !credentials?.password) {
-            console.error("Missing credentials");
-            return null;
-          }
+          if (!credentials?.email || !credentials?.password) return null;
 
-          // 2. Connect DB
           await connectDB();
 
-          // 3. Find User
+          // 1. Fetch User
           const user = await UserModel.findOne({
             email: credentials.email,
-          }).select("+password");
+          }).select("+password +mfaSecret");
 
           if (!user) {
-            console.error("User not found:", credentials.email);
+            // For security, do not reveal user existence, but we log it internally
             return null;
           }
 
-          // 4. Verify Password
+          // 2. Check Account Lockout Policy
+          if (user.lockUntil && user.lockUntil > new Date()) {
+            throw new Error(
+              `Account locked. Try again after ${user.lockUntil.toLocaleTimeString()}`,
+            );
+          }
+
+          // 3. Verify Password
           const isValid = await verifyPassword(
             credentials.password,
             user.password,
           );
 
           if (!isValid) {
-            console.error("Invalid password for:", credentials.email);
-            return null;
+            // Increment Failed Attempts
+            user.loginAttempts += 1;
+
+            // Lockout Policy: Lock for 15 mins after 5 failed attempts
+            if (user.loginAttempts >= 5) {
+              user.lockUntil = new Date(Date.now() + 15 * 60 * 1000);
+              await user.save();
+              throw new Error(
+                "Account locked due to too many failed attempts.",
+              );
+            }
+
+            await user.save();
+            throw new Error("Invalid credentials");
           }
 
-          // 5. Log & Return
-          await logActivity(user._id.toString(), user.name, "LOGIN_ATTEMPT", {
+          // 4. MFA Verification (If Enabled)
+          if (user.isMfaEnabled) {
+            if (!credentials.mfaCode) {
+              // Signal to frontend that MFA is required
+              throw new Error("MFA_REQUIRED");
+            }
+
+            const isValidToken = authenticator.check(
+              credentials.mfaCode,
+              user.mfaSecret,
+            );
+            if (!isValidToken) {
+              throw new Error("Invalid MFA Code");
+            }
+          }
+
+          // 5. Successful Login -> Reset Lockout
+          user.loginAttempts = 0;
+          user.lockUntil = undefined;
+          await user.save();
+
+          await logActivity(user._id.toString(), user.name, "LOGIN_SUCCESS", {
             status: "Success",
+            mfaUsed: user.isMfaEnabled,
           });
 
           return {
@@ -109,10 +151,11 @@ export const authOptions: NextAuthOptions = {
             role: user.role,
             clearanceLevel: user.clearanceLevel,
             department: user.department,
+            isMfaEnabled: user.isMfaEnabled,
           };
         } catch (error) {
-          console.error("Auth Error:", error);
-          return null; // Return null to trigger 401
+          console.error("Auth Logic Error:", error);
+          throw error; // Rethrow to display message to user
         }
       },
     }),
